@@ -13,7 +13,8 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  maxHttpBufferSize: 50e6  // 50MB — needed for high-quality gallery images
 });
 
 const PORT = process.env.PORT || 5000;
